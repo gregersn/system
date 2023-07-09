@@ -1,0 +1,25 @@
+server {
+        listen {{ app_port }};
+        listen [::]:{{ app_port }};
+        server_name {{ server_name }};
+        root {{ document_root }}/{{ app_root }};
+
+        client_max_body_size 1024m;
+
+        location / {
+                index index.php index.html index.htm;
+                try_files $uri $uri/ =404;
+        }
+
+        location ~ \.php$ {
+                fastcgi_pass php-fpm;
+                fastcgi_index index.php;
+                include fastcgi.conf;
+                fastcgi_read_timeout 300;
+        }
+
+        location ~ /\.ht {
+                deny all;
+        }
+}
+

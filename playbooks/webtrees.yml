@@ -1,0 +1,173 @@
+---
+- hosts: all
+  vars:
+    server_name: "{{ ansible_default_ipv4.address }}"
+    document_root: "/home/vagrant/websites"
+    app_root: webtrees
+    app_port: 81
+    db_name: webtrees
+    db_user: webtrees
+    db_password: unravel
+  
+  pre_tasks:
+  - name: Install basic packages
+    become: yes
+    package:
+      name:
+        - acl
+        - git
+        - kitty-terminfo
+        - postgresql
+        - postgresql-server
+        - python3-pip
+        - unzip
+        - vim
+      state: latest
+      update_cache: yes
+
+  - name: install Psycopg2-binary with pip globally
+    become: yes
+    pip:
+      name: psycopg2-binary
+      executable: pip3
+
+  tasks:
+  - name: install required packages
+    become: true
+    package:
+      name: 
+        - nginx
+        - php-fpm
+        - php
+        - php-cli
+        - php-gd
+        - php-intl
+        - php-pecl-zip
+        - php-pgsql
+      state: latest
+      update_cache: yes
+
+  - name: add site config
+    template:
+      src: ../config/nginx/webtrees.conf.j2
+      dest: "/etc/nginx/conf.d/webtrees.conf"
+      owner: root
+      group: root
+      mode: 0644
+    become: true
+    notify: restart nginx
+  
+  - name: start nginx
+    become: true
+    service:
+      name: nginx
+      state: started
+  
+  - name: create websites directory
+    file:
+      path: "~/websites"
+      state: directory
+      mode: 0755
+  
+  - name: download webtrees
+    unarchive:
+      src: "https://github.com/fisharebest/webtrees/releases/download/2.1.16/webtrees-2.1.16.zip"
+      dest: "{{ document_root }}"
+      mode: 0755
+      remote_src: yes
+  
+  - name: set permission on data directory
+    file:
+      path: "{{ document_root }}/{{ app_root }}/data"
+      mode: 0777
+  
+  - name: check if postgresql is initialized
+    stat:
+      path: "/var/lib/pgsql/data/pg_hba.conf"
+    register: postgres_data
+    become: yes
+  
+  - name: init postgresql
+    shell: "postgresql-setup --initdb --unit postgresql"
+    when: not postgres_data.stat.exists
+    become: yes
+  
+  - name: start nginx
+    become: true
+    service:
+      name: postgresql
+      state: started
+
+
+  - name: create postgresql database
+    postgresql_db:
+      state: present
+      name: "{{ db_name }}"
+    become: yes
+    become_user: postgres
+  
+  - name: Create user
+    postgresql_user:
+      state: present
+      name: "{{ db_user }}"
+      password: "{{ db_password }}"
+    become: yes
+    become_user: postgres
+    
+  - name: Grant db access
+    postgresql_privs:
+      type: database
+      database: "{{ db_name }}"
+      roles: "{{ db_user }}"
+      grant_option: no
+      privs: all
+    become: true
+    become_user: postgres
+    
+  - name: Grant schema public access
+    postgresql_privs:
+      type: schema
+      database: "{{ db_name }}"
+      roles: "{{ db_user }}"
+      grant_option: no
+      privs: all
+      objs: public
+    become: true
+    become_user: postgres
+
+  
+  - name: add password auth to posgress for user, ipv6
+    postgresql_pg_hba:
+      dest: /var/lib/pgsql/data/pg_hba.conf
+      contype: host
+      users: "{{ db_user }}"
+      databases: "{{ db_name }}"
+      address: ::1/128
+      method: md5
+    become: true
+    notify: restart postgres
+
+  - name: add password auth to posgress for user, ipv4
+    postgresql_pg_hba:
+      dest: /var/lib/pgsql/data/pg_hba.conf
+      contype: host
+      users: "{{ db_user }}"
+      databases: "{{ db_name }}"
+      address: 127.0.0.1/32
+      method: md5
+    become: true
+    notify: restart postgres
+
+
+  handlers:
+    - name: restart postgres
+      become: yes
+      service:
+        name: postgresql
+        state: restarted
+
+    - name: restart nginx
+      become: yes
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
